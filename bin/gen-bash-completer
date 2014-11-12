@@ -1,0 +1,157 @@
+#!perl
+
+# DATE
+# VERSION
+
+use 5.010;
+use strict;
+use warnings;
+
+use Perinci::CmdLine::Any -prefer_lite=>1;
+
+our %SPEC;
+
+$SPEC{prog} = {
+    v => 1.1,
+    summary => 'Generate bash completion script for a program',
+    args => {
+        overwrite => {
+            schema => 'bool*',
+        },
+        input => {
+            schema => 'str*',
+            req    => 1,
+            pos    => 0,
+            cmdline_aliases => {i=>{}},
+        },
+        output => {
+            schema => 'str*',
+            pos    => 1,
+            cmdline_aliases => {o=>{}},
+        },
+    },
+};
+sub prog {
+    require App::GenBashCompleter;
+    my %args = @_;
+
+    my $input  = $args{input};
+    my $output = $args{output};
+    if (!defined($output)) {
+        if ($input eq '-') {
+            $output = '-';
+        } else {
+            $output = $input;
+            $output =~ s!(.+[/\\])?(.+)!($1 // '') . "_$2"!e;
+        }
+    }
+
+    my $res = App::GenBashCompleter::gen_bash_completer(path=>$input);
+
+    return $res if $res->[0] != 200;
+    return [304, "Can't figure out how to create bash completion script for " .
+                "'$input': " . $res->[3]{'func.reason'}]
+        if !defined($res->[2]);
+    return $res if $output eq '-';
+
+    # write output file
+    if ((-e $output) && !$args{overwrite}) {
+        return [409, "File already exists: '$output', bailing"];
+    }
+    open my($fh), ">", $output
+        or return [500, "Can't write to '$output': $!"];
+    print $fh $res->[2];
+    chmod 0755, $output;
+
+    [200, "OK (written to file '$output')"];
+}
+
+Perinci::CmdLine::Any->new(
+    url => '/main/prog',
+    log => 1,
+)->run;
+
+# ABSTRACT: Generate bash completion script for a program
+# PODNAME: gen-bash-completer
+
+=head1 SYNOPSIS
+
+ % gen-bash-completer foo
+
+If successful will produce C<_foo>, which you can use for bash completion:
+
+ % complete -C _foo foo
+
+Now you can use tab completion to complete C<foo>:
+
+ % foo <tab>
+ % foo --op<tab>
+
+and so on.
+
+
+=head1 DESCRIPTION
+
+C<gen-bash-completer> accepts a program/script file and uses various ways to try
+to generate bash completion script which you can later you in bash's C<complete
+-C> to provide completion.
+
+Currently the kinds of script it recognizes are:
+
+=over
+
+=item * Perl script which uses Getopt::Long::Complete or Perinci::CmdLine
+
+This is script that can complete itself, because the said modules can handle
+bash completion for it. For these scripts, C<gen-bash-completer> will just do
+nothing.
+
+=item * Perl script which uses Getopt::Long
+
+For this kind of script, C<gen-bash-completer> will load L<Getopt::Long>,
+temporarily patch/trap the C<GetOptions> function (as well as
+C<GetOptionsFromArray> and C<GetOptionsFromString>), and run the Perl script.
+The patched function will simply capture the options specification and exit. We
+then feed this specification to L<Getopt::Long::Complete>.
+
+=item * Others
+
+Other methods will be added in the future, e.g. reading C<OPTIONS> section in a
+Perl script's POD, support for other command-line option parsing modules, etc.
+
+
+=head1 OPTIONS
+
+C<*> denotes required option.
+
+=head2 --input=FILENAME*, -i (or via arg[0])
+
+Set input filename. If you want to read from stdin, specify C<-> (dash).
+
+=head2 --output=FILENAME, -o (or via arg[1])
+
+Set output filename. If input is from stdin, will default to stdout. C<-> also
+means stdout. Otherwise, will default to C<_INPUT>, so if input is C<foo.pl>
+will default to C<_foo.pl>. Note: the underscore prefix is the traditional
+convention of completion function name in bash.
+
+=head2 --overwrite
+
+Overwrite existing output. The default behavior is to bail if output already
+exists.
+
+
+=head1 ENVIRONMENT
+
+
+=head2 DEBUG => bool
+
+Set to true to enable debugging messages.
+
+
+=head1 TODO
+
+
+=head1 SEE ALSO
+
+L<Dist::Zilla::Plugin::GenBashCompleter>

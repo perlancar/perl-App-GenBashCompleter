@@ -8,144 +8,131 @@ use strict;
 use warnings;
 use Log::Any '$log';
 
-use Monkey::Patch::Action;
+use Data::Dump qw(dump);
 
 our %SPEC;
 
-$SPEC{':package'} = {
-    v => 1.1,
-    summary => "Generate completion scripts",
-};
+sub _gen_gl {
+    my $spec = shift;
 
-# XXX plugin based
-sub _detect_file {
-    my ($prog, $path) = @_;
-    open my($fh), "<", $path or return [500, "Can't open: $!"];
-    read $fh, my($buf), 2;
-    my $is_script = $buf eq '#!';
+    my @res;
 
-    # currently we don't support non-scripts at all
-    return [200, "OK", 0, {"func.reason"=>"Not a script"}] if !$is_script;
-
-    my $is_perl_script = <$fh> =~ /perl/;
-    seek $fh, 0, 0;
-    my $content = do { local $/; ~~<$fh> };
-
-    my $qprog = shell_quote($prog);
-    if ($content =~
-            /^\s*# FRAGMENT id=bash-completion-prog-hints command=(.+?)\s*$/m) {
-        return [200, "OK", 1, {
-            "func.command"=>"complete -C ".shell_quote($1)." $qprog",
-            "func.note"=>"hint",
-        }];
-    } elsif ($content =~
-            /^\s*# FRAGMENT id=bash-completion-prog-hints completer=1 for=(.+?)\s*$/m) {
-        return [200, "OK", 1, {
-            "func.command"=>join(
-                "; ",
-                map {"complete -C $qprog ".shell_quote($_)} split(',',$1)
-            ),
-            "func.note"=>"hint(completer)",
-        }];
-    } elsif ($is_perl_script && $content =~
-                 /^\s*(use|require)\s+(Perinci::CmdLine(?:::Any|::Lite)?)\b/m) {
-        return [200, "OK", 1, {
-            "func.command"=>"complete -C $qprog $qprog",
-            "func.note"=>$2,
-        }];
-    } elsif ($is_perl_script && $content =~
-                 /^\s*(use|require)\s+(Getopt::Long::Complete)\b/m) {
-        return [200, "OK", 1, {
-            "func.command"=>"complete -C $qprog $qprog",
-            "func.note"=>$2,
-        }];
+    for (keys %$spec) {
+        $spec->{$_} = sub{};
     }
-    [200, "OK", 0];
+
+    push @res, "use Getopt::Long::Complete qw(GetOptionsWithCompletion);\n";
+    push @res, "my \@spec = ", dump(%$spec), ";\n";
+    push @res, "GetOptionsWithCompletion(sub{}, \@spec);\n";
+    join "", @res;
 }
 
-# add one or more programs
-sub _add {
+$SPEC{gen_bash_completer} = {
+    v => 1.1,
+    args => {
+        path => {
+            summary => 'Path to program/script to generate completion for',
+            description => <<'_',
+
+You can specify `-` to mean stdin.
+
+_
+            schema => 'str*',
+            req => 1,
+            pos => 0,
+        },
+    },
+    result => {
+        summary => 'Will return bash completer script, or undef',
+        schema => 'buf*',
+    },
+};
+sub gen_bash_completer {
     my %args = @_;
 
-    my $readres = _read_parse_f($args{file});
-    return err("Can't read entries", $readres) if $readres->[0] != 200;
-
-    my %existing_progs = map {$_->{id}=>1} @{ $readres->[2]{parsed} };
-
-    my $content = $readres->[2]{content};
-
-    my $added;
-    my $envres = envresmulti();
-  PROG:
-    for my $prog0 (@{ $args{progs} }) {
-        my $path;
-        $log->infof("Processing program %s ...", $prog0);
-        if ($prog0 =~ m!/!) {
-            $path = $prog0;
-            unless (-f $path) {
-                $log->errorf("No such file '$path', skipped");
-                $envres->add_result(404, "No such file", {item_id=>$prog0});
-                next PROG;
-            }
+    my $path = $args{path};
+    my $content;
+    {
+        local $/;
+        if ($path eq '-') {
+            $content = <STDIN>;
         } else {
-            $path = which($prog0);
-            unless ($path) {
-                $log->errorf("'%s' not found in PATH, skipped", $prog0);
-                $envres->add_result(404, "Not in PATH", {item_id=>$prog0});
-                next PROG;
-            }
+            open my($fh), "<", $path
+                or return [500, "Can't open file '$path': $!"];
+            $content = <$fh>;
         }
-        my $prog = $prog0; $prog =~ s!.+/!!;
-        my $detectres = _detect_file($prog, $path);
-        if ($detectres->[0] != 200) {
-            $log->errorf("Can't detect '%s': %s", $prog, $detectres->[1]);
-            $envres->add_result($detectres->[0], $detectres->[1],
-                                {item_id=>$prog0});
-            next PROG;
-        }
-        $log->debugf("Detection result %s: %s", $prog, $detectres);
-        if (!$detectres->[2]) {
-            # we simply ignore undetected programs
-            next PROG;
-        }
-
-        if ($args{replace}) {
-            if ($existing_progs{$prog}) {
-                $log->infof("Replacing entry in %s: %s",
-                            $readres->[2]{path}, $prog);
-            } else {
-                $log->infof("Adding entry to %s: %s",
-                            $readres->[2]{path}, $prog);
-            }
-        } else {
-            if ($existing_progs{$prog}) {
-                $log->debugf("Entry already exists in %s: %s, skipped",
-                             $readres->[2]{path}, $prog);
-                next PROG;
-            } else {
-                $log->infof("Adding entry to %s: %s",
-                            $readres->[2]{path}, $prog);
-            }
-        }
-
-        my $insres = Text::Fragment::insert_fragment(
-            text=>$content, id=>$prog,
-            payload=>$detectres->[3]{'func.command'},
-            ((attrs=>{note=>$detectres->[3]{'func.note'}}) x !!$detectres->[3]{'func.note'}));
-        $envres->add_result($insres->[0], $insres->[1],
-                            {item_id=>$prog0});
-        next if $insres->[0] == 304;
-        next unless $insres->[0] == 200;
-        $added++;
-        $content = $insres->[2]{text};
     }
 
-    if ($added) {
-        my $writeres = _write_f($args{file}, $content);
-        return err("Can't write", $writeres) if $writeres->[0] != 200;
+    my $reason;
+    my $shebang;
+    my $completer;
+  DETECT:
+    {
+        if ($content !~ /\A(#!.+)/) {
+            $reason = 'Not a script (no shebang line)';
+            last DETECT;
+        }
+        $shebang = $1;
+        if ($shebang !~ /.+\bperl\b/) {
+            $reason = 'Shebang line does not indicate this is a Perl script';
+            last DETECT;
+        }
+        if ($content =~ /(use|require)\s+
+                         (Getopt::Long::Complete|
+                             Perinci::CmdLine(::Any|::Lite)?)\b/sx) {
+            return [304, "Script using $1 can complete itself"];
+        }
+        if ($content =~ /(use|require)\s+(Getopt::Long)\b/sx) {
+            require Capture::Tiny;
+            require UUID::Random;
+            my $tag = UUID::Random::generate();
+            my ($stdout, $stderr, $exit) = Capture::Tiny::capture(
+                sub {
+                    system $^X,
+                        "-MGetopt::Long::Patch::DumpSpec=-tag,$tag",
+                        $path;
+                },
+            );
+            if ($stdout =~ /^# BEGIN DUMPSPEC $tag\s+(.*)^# END DUMPSPEC $tag/ms) {
+                my $spec = eval $1;
+                if ($@) {
+                    $reason = "Detected as Perl script using Getopt::Long, ".
+                        "but error in eval-ing captured option spec: $@, ".
+                            "raw captured option spec: <<<$1>>>";
+                     last DETECT;
+                }
+                if (ref($spec) ne 'HASH') {
+                    $reason = "Detected as Perl script using Getopt::Long, ".
+                        "but got a non-hash option spec?";
+                }
+                $completer = _gen_gl($spec);
+                last DETECT;
+            } else {
+                $reason = "Detected as Perl script using Getopt::Long, ".
+                    "but can't capture option spec";
+                last DETECT;
+            }
+        }
+        $reason = "No completion hints available";
+    } # DETECT
+
+    if ($completer) {
+        my @res = ($shebang, "\n");
+
+        push @res, "# generated by $0 on " . localtime . "\n";
+
+        push @res, "# FRAGMENT id=bash-completion-prog-hints completer=1";
+        if ($path ne '-') {
+            my $progname = $path; $progname =~ s!.+[/\\]!!;
+            push @res, " for=$progname";
+        }
+        push @res, "\n";
+
+        push @res, $completer;
+        $completer = join "", @res;
     }
 
-    $envres->as_struct;
+    return [200, "OK", $completer, {'func.reason' => $reason}];
 }
 
 1;
