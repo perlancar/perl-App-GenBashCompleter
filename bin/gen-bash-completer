@@ -71,7 +71,7 @@ Perinci::CmdLine::Any->new(
     log => 1,
 )->run;
 
-# ABSTRACT: Generate bash completion script for a program
+# ABSTRACT:
 # PODNAME:
 
 =head1 SYNOPSIS

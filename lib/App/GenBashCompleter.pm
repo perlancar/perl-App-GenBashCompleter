@@ -29,6 +29,7 @@ sub _gen_gl {
 
 $SPEC{gen_bash_completer} = {
     v => 1.1,
+    summary => 'Generate bash completion script for a program',
     args => {
         path => {
             summary => 'Path to program/script to generate completion for',
@@ -136,4 +137,4 @@ sub gen_bash_completer {
 }
 
 1;
-# ABSTRACT: Backend for gen-bash-completer
+# ABSTRACT:
