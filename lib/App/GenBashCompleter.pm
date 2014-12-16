@@ -89,11 +89,11 @@ sub gen_bash_completer {
             my ($stdout, $stderr, $exit) = Capture::Tiny::capture(
                 sub {
                     system $^X,
-                        "-MGetopt::Long::Patch::DumpSpec=-tag,$tag",
+                        "-MGetopt::Long::Patch::DumpAndExit=-tag,$tag",
                         $path;
                 },
             );
-            if ($stdout =~ /^# BEGIN DUMPSPEC $tag\s+(.*)^# END DUMPSPEC $tag/ms) {
+            if ($stdout =~ /^# BEGIN DUMP $tag\s+(.*)^# END DUMP $tag/ms) {
                 my $spec = eval $1;
                 if ($@) {
                     $reason = "Detected as Perl script using Getopt::Long, ".
