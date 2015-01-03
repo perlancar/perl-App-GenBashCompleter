@@ -151,9 +151,6 @@ exists.
 Set to true to enable debugging messages.
 
 
-=head1 TODO
-
-
 =head1 SEE ALSO
 
 L<Dist::Zilla::Plugin::GenBashCompleter>
