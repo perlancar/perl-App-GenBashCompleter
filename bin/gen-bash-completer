@@ -122,35 +122,6 @@ Perl script's POD, support for other command-line option parsing modules, etc.
 =back
 
 
-=head1 OPTIONS
-
-C<*> denotes required option.
-
-=head2 --input=FILENAME*, -i (or via arg[0])
-
-Set input filename. If you want to read from stdin, specify C<-> (dash).
-
-=head2 --output=FILENAME, -o (or via arg[1])
-
-Set output filename. If input is from stdin, will default to stdout. C<-> also
-means stdout. Otherwise, will default to C<_INPUT>, so if input is C<foo.pl>
-will default to C<_foo.pl>. Note: the underscore prefix is the traditional
-convention of completion function name in bash.
-
-=head2 --overwrite
-
-Overwrite existing output. The default behavior is to bail if output already
-exists.
-
-
-=head1 ENVIRONMENT
-
-
-=head2 DEBUG => bool
-
-Set to true to enable debugging messages.
-
-
 =head1 SEE ALSO
 
 L<Dist::Zilla::Plugin::GenBashCompleter>
